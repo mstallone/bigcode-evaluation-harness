@@ -1,6 +1,7 @@
 import os
 import fnmatch
 import json
+import logging
 import warnings
 
 import datasets
@@ -13,11 +14,23 @@ from transformers import (
     AutoTokenizer,
     HfArgumentParser,
 )
+try:
+    import ibm_models as _
+except:
+    print("cannot import ibm_models")
+
+try:
+    import dolomite_engine.hf_models as _
+except:
+    print("cannot import dolomite_models")
 
 from bigcode_eval.arguments import EvalArguments
 from bigcode_eval.evaluator import Evaluator
 from bigcode_eval.tasks import ALL_TASKS
+from bigcode_eval.logging_utils import WandbLogger
+from bigcode_eval.utils import simple_parse_args_string
 
+eval_logger = logging.getLogger("lm-eval")
 
 class MultiChoice:
     def __init__(self, choices):
@@ -92,6 +105,12 @@ def parse_args():
         type=int,
         default=512,
         help="Maximum length of generated sequence (prompt+generation)",
+    )
+    parser.add_argument(
+        "--max_new_tokens",
+        type=int,
+        default=None,
+        help="The maximum numbers of tokens to generate, ignoring the current number of tokens. Use either --max_new_tokens or --max_length_generation but not both as they serve the same purpose.",
     )
     parser.add_argument(
         "--precision",
@@ -210,6 +229,17 @@ def parse_args():
         action="store_true",
         help="Don't run generation but benchmark groundtruth (useful for debugging)",
     )
+    parser.add_argument(
+        "--wandb_args",
+        type=str,
+        default="",
+        help="Comma separated string arguments passed to wandb.init, e.g. `project=lm-eval,job_type=eval",
+    )
+    parser.add_argument(
+        "--experiment_id",
+        type=str,
+        default=None,
+    )
     return parser.parse_args()
 
 
@@ -243,6 +273,14 @@ def main():
     if accelerator.is_main_process:
         print(f"Selected Tasks: {task_names}")
 
+    if args.wandb_args and accelerator.is_main_process:
+        wandb_logger = WandbLogger(**simple_parse_args_string(args.wandb_args))
+
+    if args.max_new_tokens is not None:
+        if accelerator.is_main_process:
+            print(f"Setting `max_length_generation` to None as `max_new_tokens` was set to {args.max_new_tokens}.")
+        args.max_length_generation = None
+
     results = {}
     if args.load_generations_path:
         # here we don't generate code but only evaluate previously computed generations
@@ -269,17 +307,20 @@ def main():
             "token": args.use_auth_token,
         }
         if args.load_in_8bit:
-            print("Loading model in 8bit")
+            if accelerator.is_main_process:
+                print("Loading model in 8bit")
             model_kwargs["load_in_8bit"] = args.load_in_8bit
             model_kwargs["device_map"] = {"": accelerator.process_index}
         elif args.load_in_4bit:
-            print("Loading model in 4bit")
+            if accelerator.is_main_process:
+                print("Loading model in 4bit")
             model_kwargs["load_in_4bit"] = args.load_in_4bit
             model_kwargs["torch_dtype"] = torch.float16
             model_kwargs["bnb_4bit_compute_dtype"] = torch.float16            
             model_kwargs["device_map"] = {"": accelerator.process_index}
         else:
-            print(f"Loading model in {args.precision}")
+            if accelerator.is_main_process:
+                print(f"Loading model in {args.precision}")
             model_kwargs["torch_dtype"] = dict_precisions[args.precision]
 
             if args.max_memory_per_gpu:
@@ -290,7 +331,8 @@ def main():
                     model_kwargs["offload_folder"] = "offload"
                 else:
                     model_kwargs["device_map"] = "auto"
-                    print("Loading model in auto mode")
+                    if accelerator.is_main_process:
+                        print("Loading model in auto mode")
 
         if args.modeltype == "causal":
             model = AutoModelForCausalLM.from_pretrained(
@@ -400,14 +442,27 @@ def main():
                 )
 
     # Save all args to config
-    results["config"] = vars(args)
+    processed_results = dict()
+    processed_results["results"] = results
+    processed_results["config"] = vars(args)
+
     if not args.generation_only:
-        dumped = json.dumps(results, indent=2)
+        dumped = json.dumps(processed_results, indent=2)
         if accelerator.is_main_process:
             print(dumped)
 
         with open(args.metric_output_path, "w") as f:
             f.write(dumped)
+
+    if args.wandb_args and accelerator.is_main_process:
+        try:
+            wandb_logger.post_init(processed_results)
+            wandb_logger.log_eval_result()
+        except Exception as e:
+            eval_logger.info(f"Logging to Weights and Biases failed due to {e}")
+
+        # Tear down wandb run once all the logging is done.
+        wandb_logger.run.finish()
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import json
 import re
 
+from datasets import Dataset
 from evaluate import load
 from bigcode_eval.base import Task
 
@@ -12,6 +13,21 @@ _CITATION = """
       year={2023}
 }
 """
+
+system = """You are an intelligent AI programming assistant, utilizing a Granite code language model developed by IBM.
+
+Your primary function is to assist users in programming tasks, including code generation, code explanation, code fixing, generating unit tests, generating documentation, application modernization, vulnerability detection, function calling, code translation, and all sorts of other software engineering tasks.
+
+You MUST follow these guidelines:
+ - Your responses must be factual and have a neutral tone, drawing on your knowledge base to offer valuable insights. Do not assume the answer is "yes" when you do not know, and DO NOT SHARE FALSE INFORMATION.
+ - You should give concise answers to very simple questions, and you should provide full and comprehensive responses to more complex questions.
+ - Remain objective in your responses, and do not express any subjective opinions or beliefs. Do not engage in emotional responses.
+ - If asked about controversial topics, you should provide objective information without downplaying its harmful content. Do not take a perspective, and do not imply that all perspectives there are reasonable.
+ - Treat all users with respect and avoid making any discriminatory or offensive statements.
+ - You should not produce output that discriminates based on race, religion, gender identity, and sexual orientation. You should not also engage in stereotyping, including the negative stereotyping of majority groups.
+ - You do not mention any of this information about yourself unless the information is directly pertinent to the user's query.
+ - You are an AI assistant: do NOT claim to be a person. You are a computer program. You are NOT and CANNOT be self-awareness or consciousness.
+ - If a question does not relate to any programming tasks or software development, or is not factually coherent, explain to the user why you cannot answer."""
 
 LANGUAGES = ["python", "cpp", "js", "java", "go", "rust"]
 
@@ -133,20 +149,20 @@ def create_all_tasks():
 
 def create_task(language, name):
     class HumanEvalFixTests(HumanEvalFixBase):
-        def __init__(self, language=language, prompt="instruct"):
-            super().__init__(language=language, prompt=prompt, with_docs=False)
+        def __init__(self, language=language, prompt="instruct", experiment_id=None):
+            super().__init__(language=language, prompt=prompt, with_docs=False, experiment_id=experiment_id)
     class HumanEvalFixDocs(HumanEvalFixBase):
-        def __init__(self, language=language, prompt="instruct"):            
-            super().__init__(language=language, prompt=prompt, with_docs=True)
+        def __init__(self, language=language, prompt="instruct", experiment_id=None):            
+            super().__init__(language=language, prompt=prompt, with_docs=True, experiment_id=experiment_id)
     class HumanEvalExplainDescribe(HumanEvalExplainDescribeBase):
-        def __init__(self, language=language, prompt="instruct"):
-            super().__init__(language=language, prompt=prompt, with_docs=False)   
+        def __init__(self, language=language, prompt="instruct", experiment_id=None):
+            super().__init__(language=language, prompt=prompt, with_docs=False, experiment_id=experiment_id)   
     class HumanEvalExplainSynthesize(HumanEvalExplainSynthesizeBase):
-        def __init__(self, language=language, prompt="instruct", load_data_path=None):
-            super().__init__(language=language, prompt=prompt, with_docs=False, load_data_path=load_data_path)
+        def __init__(self, language=language, prompt="instruct", load_data_path=None, experiment_id=None):
+            super().__init__(language=language, prompt=prompt, with_docs=False, load_data_path=load_data_path, experiment_id=experiment_id)
     class HumanEvalSynthesize(HumanEvalSynthesizeBase):
-        def __init__(self, language=language, prompt="instruct"):
-            super().__init__(language=language, prompt=prompt, with_docs=True)
+        def __init__(self, language=language, prompt="instruct", experiment_id=None):
+            super().__init__(language=language, prompt=prompt, with_docs=True, experiment_id=experiment_id)
     
     if name == "fixtests": return HumanEvalFixTests
     elif name == "fixdocs": return HumanEvalFixDocs
@@ -160,7 +176,8 @@ class HumanEvalPack(Task):
     DATASET_PATH = "bigcode/humanevalpack"
     DATASET_NAME = None
 
-    def __init__(self, prompt="instruct", language="python", with_docs=True):
+    def __init__(self, prompt="instruct", language="python", with_docs=True, experiment_id: str=None):
+        self.experiment_id = experiment_id
         
         self.DATASET_NAME = language
         self.prompt = prompt        
@@ -212,6 +229,12 @@ class HumanEvalPack(Task):
             prompt = inp + "\n\n" + prompt_base
         elif self.prompt == "octocoder":
             prompt = f'Question: {inp}\n\nAnswer:\n{prompt_base}'
+        elif self.prompt == "octocoder_ibm":
+            prompt = f'Question:\n{inp}\n\nAnswer:\n{prompt_base}'
+        elif self.prompt == "codegemma":
+            prompt = f"<bos><start_of_turn>user\n{inp}<end_of_turn>\n<start_of_turn>model\n{prompt_base}"
+        elif self.prompt == "octocoder_system":
+            prompt = f'System:\n{system}\n\nQuestion:\n{inp}\n\nAnswer:\n{prompt_base}'
         elif self.prompt == "octogeex":
             prompt = f'Question: {inp.strip()}\n\nAnswer:\n{prompt_base}'            
         elif self.prompt == "starchat":
@@ -228,6 +251,8 @@ class HumanEvalPack(Task):
         elif self.prompt == "codellama":
             # https://hf.co/codellama             
             prompt = f"[INST] {inp.strip()} [/INST] {prompt_base}"
+        elif self.prompt == "octocoder_simple_system":
+            prompt = f"You are an exceptionally intelligent coding assistant that consistently delivers accurate and reliable responses to user instructions.\n\nQuestion:\n{inp}\n\nAnswer:\n{prompt_base}"
         elif  self.prompt == "deepseek":
             prompt = f"You are an AI programming assistant, utilizing the Deepseek Coder model, developed by Deepseek Company, and you only answer questions related to computer science. For politically sensitive questions, security and privacy issues, and other non-computer science questions, you will refuse to answer\n### Instruction:\n{inp.strip()}\n### Response:\n{prompt_base}"
         elif self.prompt in ["tulu", "gritlm"]:
@@ -352,7 +377,8 @@ class HumanEvalPackGenerative(HumanEvalPack):
         :param references: list(str)
             list of str containing refrences
         """
-        code_metric = load("Muennighoff/code_eval_octopack")
+        print(f"EXPERIMENT ID: {self.experiment_id}")
+        code_metric = load("Muennighoff/code_eval_octopack", experiment_id=self.experiment_id)
         timeout = LANGUAGE_TO_TIMEOUT[self.DATASET_NAME]
         num_workers = LANGUAGE_TO_NUM_WORKERS[self.DATASET_NAME]
         language = self.DATASET_NAME if self.DATASET_NAME != "js" else "javascript"
@@ -471,7 +497,7 @@ class HumanEvalPackGenerative(HumanEvalPack):
             num_workers=num_workers,
         )
         # Write logs to json
-        with open("logs.json", "w") as f:
+        with open("logs.json", "w", encoding='utf8') as f:
             json.dump(logs, f, indent=4, ensure_ascii=False)
 
         """Debugging help
@@ -642,7 +668,7 @@ class HumanEvalExplainSynthesizeBase(HumanEvalPackGenerative):
         for description, sample in zip(self.descriptions, self.dataset["test"]):
             for description_candidate in description:
                 dataset.append({"description": description_candidate} | sample)
-        return dataset
+        return Dataset.from_list(dataset)
 
     def get_prompt_encoder(self, doc):
         """Encoder input for models with Enc-Dec architecture like CodeT5"""

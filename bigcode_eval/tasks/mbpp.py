@@ -84,3 +84,36 @@ class MBPP(Task):
             predictions=generations,
         )
         return results
+
+
+class MBPP3Shot(MBPP):
+    """A task represents an entire benchmark including its dataset, problems,
+    answers, generation settings and evaluation methods.
+    """
+
+    def __return_3_shot(self):
+        """
+        As per https://github.com/google-research/google-research/blob/master/mbpp/README.md
+        """
+
+        few_shot_template = "You are an expert Python programmer, and here is your task: {prompt} Your code should pass these tests:\n\n{tests}\n[BEGIN]\n{code}\n[DONE]"
+        prompt_set = self.dataset["prompt"]
+
+        few_shots_subset = prompt_set.filter(lambda x : x['task_id'] in range(2,5))
+        few_shots = [few_shot_template.format(prompt=shot['text'], tests="\n".join(shot['test_list']), code=shot['code']) for shot in few_shots_subset]
+
+        return "\n".join(few_shots)
+
+
+    def get_prompt(self, doc):
+        """Builds the prompt for the LM to generate from.
+        MBPP prompt is built following to InCoder (Fried et al.) approach
+        prompt = docstring that includes one test
+        """
+
+        three_shots = self.__return_3_shot()
+        description = doc["text"]
+        test_example = doc["test_list"][0]
+        prompt = f'"""{three_shots}\n{description}\n{test_example}\n"""\n'
+
+        return prompt

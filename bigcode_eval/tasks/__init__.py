@@ -20,7 +20,13 @@ TASK_REGISTRY = {
     **humanevalplus.create_all_tasks(),
     **humanevalpack.create_all_tasks(),
     "mbpp": mbpp.MBPP,
+    "mbpp-3shot": mbpp.MBPP3Shot,
     "mbppplus": mbppplus.MBPPPlus,
+    "mbppplus-3shot": mbppplus.MBPPPlus3Shot,
+    "mbppplus_v1": mbppplus.MBPPPlus,
+    "mbppplus_v2": mbppplus.MBPPPlusV2,
+    "mbppplus_v1-3shot": mbppplus.MBPPPlus3Shot,
+    "mbppplus_v2-3shot": mbppplus.MBPPPlusV23Shot,
     "parity": parity.Parity,
     "python_bugs": python_bugs.PythonBugs,
     "quixbugs": quixbugs.QuixBugs,
@@ -41,6 +47,8 @@ def get_task(task_name, args=None):
         kwargs = {}
         if "prompt" in inspect.signature(TASK_REGISTRY[task_name]).parameters:
             kwargs["prompt"] = args.prompt
+        if "experiment_id" in inspect.signature(TASK_REGISTRY[task_name]).parameters:
+            kwargs["experiment_id"] = args.experiment_id
         if "load_data_path" in inspect.signature(TASK_REGISTRY[task_name]).parameters:
             kwargs["load_data_path"] = args.load_data_path
         return TASK_REGISTRY[task_name](**kwargs)

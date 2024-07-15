@@ -10,6 +10,7 @@ removes low-quality and ill-formed tasks for benchmark quality control.
 Homepage: https://github.com/evalplus/evalplus
 """
 
+from datasets import load_dataset
 import os
 
 from bigcode_eval.tasks.mbpp import MBPP
@@ -32,6 +33,7 @@ class MBPPPlus(MBPP):
     """
 
     DATASET_PATH = "evalplus/mbppplus"
+    DATASET_REVISION = "v0.1.0"
 
     def get_prompt(self, doc):
         """Builds the prompt for the LM to generate from.
@@ -56,6 +58,8 @@ class MBPPPlus(MBPP):
     def get_dataset(self):
         """Returns dataset for the task or an iterable of any object, that get_prompt can handle"""
         dataset = self.dataset["test"]
+        
+        print(f"Running with {len(dataset)} samples")
         return dataset
 
     def process_results(self, generations, references):
@@ -72,3 +76,44 @@ class MBPPPlus(MBPP):
             timeout=10.0,  # 10s timeout
         )
         return results
+
+class MBPPPlusV2(MBPPPlus):
+    DATASET_REVISION = "v0.2.0"
+
+class MBPPPlus3Shot(MBPPPlus):
+    """A task represents an entire benchmark including its dataset, problems,
+    answers, generation settings and evaluation methods.
+    """
+
+    def __return_3_shot(self):
+        """
+        As per https://github.com/google-research/google-research/blob/master/mbpp/README.md
+        """
+
+        few_shot_template = "You are an expert Python programmer, and here is your task: {prompt} Your code should pass these tests:\n\n{tests}\n[BEGIN]\n{code}\n[DONE]"
+
+        dataset = load_dataset("mbpp")
+        prompt_set = dataset["prompt"]
+
+        few_shots_subset = prompt_set.filter(lambda x : x['task_id'] in range(2,5))
+        few_shots = [few_shot_template.format(prompt=shot['text'], tests="\n".join(shot['test_list']), code=shot['code']) for shot in few_shots_subset]
+
+        return "\n".join(few_shots)
+
+
+    def get_prompt(self, doc):
+        """Builds the prompt for the LM to generate from.
+        MBPP prompt is built following to InCoder (Fried et al.) approach
+        prompt = docstring that includes one test
+        """
+
+        three_shots = self.__return_3_shot()
+        description = doc["prompt"]
+        test_example = doc["test_list"][0]
+        prompt = f'"""{three_shots}\n{description}\n{test_example}\n"""\n'
+
+        return prompt
+
+
+class MBPPPlusV23Shot(MBPPPlus3Shot):
+    DATASET_REVISION = "v0.2.0"
